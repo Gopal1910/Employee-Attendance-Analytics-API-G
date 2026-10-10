@@ -90,6 +90,8 @@ def dt_to_epoch_ms(dt: Optional[datetime]) -> Optional[int]:
     """Convert datetime to epoch milliseconds integer."""
     if dt is None:
         return None
+    if isinstance(dt, (int, float)):
+        return int(dt)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
     return int(dt.timestamp() * 1000)
@@ -415,9 +417,6 @@ def health():
 @app.post("/employees", response_model=Employee, status_code=status.HTTP_201_CREATED, tags=["employees"])
 def create_employee(body: EmployeeCreate):
     """Create an employee. Enforces uniqueness on emp_code via unique index."""
-    if db.employees.find_one({"emp_code": body.emp_code}):
-        raise HTTPException(status_code=409, detail="emp_code already exists")
-
     doc = body.model_dump()
     doc["created_at"] = datetime.now(UTC).replace(microsecond=0)
 
@@ -502,13 +501,23 @@ def punch_out(body: PunchOutRequest):
     punch_out_ms = truncate_instant_ms(punch_out_ms)
     punch_out_dt = ms_to_utc_dt(punch_out_ms)
 
-    # Locate most recent record for employee with punch_in <= punch_out_dt
+    # Locate most recent record for employee with punch_in <= punch_out_dt (excluding null punch_ins)
     candidate = db.attendance_logs.find_one(
-        {"emp_code": body.emp_code, "punch_in": {"$lte": punch_out_dt}},
+        {"emp_code": body.emp_code, "punch_in": {"$ne": None, "$lte": punch_out_dt}},
         sort=[("punch_in", DESCENDING)],
     )
 
     if not candidate:
+        # Check if a punch-in exists that is after punch_out_dt (punched_at <= punch_in)
+        future_candidate = db.attendance_logs.find_one(
+            {"emp_code": body.emp_code, "punch_in": {"$gt": punch_out_dt}},
+            sort=[("punch_in", ASCENDING)],
+        )
+        if future_candidate:
+            raise HTTPException(
+                status_code=422,
+                detail="punched_at must be strictly after punch_in",
+            )
         raise HTTPException(status_code=404, detail="No punch-in found")
 
     if candidate.get("punch_out") is not None:

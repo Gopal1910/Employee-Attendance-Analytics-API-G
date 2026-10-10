@@ -56,7 +56,7 @@ Interactive Swagger documentation is accessible at:
 
 Run the automated test suite with pytest:
 ```bash
-python -m pytest tests/test_api.py -v
+pytest -v
 ```
 
 ## Architecture & Implementation Notes
